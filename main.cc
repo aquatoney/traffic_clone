@@ -17,7 +17,8 @@ using namespace std;
 
 pcap_t* desc;
 pcap_dumper_t* dump_file;
-unsigned long long cur_pkt_num;
+uint64_t cur_pkt_num;
+uint64_t amount = 0;
 
 #define MIN_IP_PKT_LEN 40
 
@@ -95,6 +96,7 @@ void clone_handler(unsigned char* par, struct pcap_pkthdr* hdr, unsigned char* d
     ip_hdr->daddr = htonl(p->t_addr);
   }
 
+  amount += hdr->len;
   pcap_dump((unsigned char *)dump_file, hdr, data);
 
 }
@@ -188,9 +190,21 @@ int main(int argc, char const *argv[])
 
   init_clone();
 
-  pcap_loop(desc, -1, (pcap_handler) clone_handler, NULL);
+  struct timeval start, now;
 
+  gettimeofday(&start, NULL);
+
+  pcap_loop(desc, -1, (pcap_handler) clone_handler, NULL);
   close_clone();
+
+  gettimeofday(&now, NULL);
+
+  uint64_t time_s = (now.tv_sec-start.tv_sec) * 1000000 + (now.tv_usec-start.tv_usec);
+  double tp = (double)amount*8*1000000/(time_s*1000*1000*1000);
+
+  printf("%lu IP addresses\n", ip_pairs.size());
+  printf("Amount: %.2f GB, Time: %.2f s, Throughput: %.2lf Gbps\n", 
+         (float)amount/(1000*1000*1000), (float)time_s/1000000, tp);
 
   return 0;
 }
