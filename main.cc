@@ -50,6 +50,9 @@ uint64_t NET_BASE = MAX_RAND;
 uint64_t MIN_IP = 0;
 uint64_t MAX_IP = MAX_RAND;
 
+char loopback_head[4] = {0x02, 0x00, 0x00, 0x00}; 
+unsigned ip_offset = 14;
+
 void close_clone()
 {
     pcap_dump_close(dump_file);
@@ -58,6 +61,10 @@ void close_clone()
 int is_ip_pkt(unsigned char* data, unsigned data_len)
 { 
   if (data_len < MIN_IP_PKT_LEN) return -1;
+  if (memcmp(data, loopback_head, 4) == 0) {
+    ip_offset = 4;
+    return 1;
+  }
   return (data[12] == 0x08 && data[13] == 0x00);
 }
 
@@ -86,7 +93,7 @@ void clone_handler(unsigned char* par, struct pcap_pkthdr* hdr, unsigned char* d
   }
 
   if (is_ip_pkt(data, hdr->len)) {
-    struct iphdr* ip_hdr = (struct iphdr*)(data+14);
+    struct iphdr* ip_hdr = (struct iphdr*)(data+ip_offset);
     
     struct ip_info* p;
     p = create_or_locate_addr(ntohl(ip_hdr->saddr));
