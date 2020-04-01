@@ -25,6 +25,7 @@ uint64_t amount = 0;
 struct clone_settings {
   int setting;
   unsigned net;
+  unsigned clone_times;
   unsigned long max_cap;
   char device[1024];
   char read_file[1024];
@@ -34,6 +35,7 @@ struct clone_settings {
 #define NET_POOL 1
 #define OFFLINE_CAP 2
 #define WRITE_CAP 4
+#define PRODUCE 8
 
 struct clone_settings paras;
 
@@ -46,6 +48,16 @@ unordered_map<uint32_t, ip_info*> ip_pairs;
 unsigned MASK = 24;
 uint64_t MAX_RAND = pow(2, MASK);
 uint64_t NET_BASE = MAX_RAND;
+
+uint64_t cur_clone_times = 0;
+unsigned cur_net = 1;
+
+struct timeval first_ts;
+struct timeval last_ts;
+
+long long diff_sec = 0;
+long long diff_usec = 0;
+
 
 uint64_t MIN_IP = 0;
 uint64_t MAX_IP = MAX_RAND;
@@ -104,6 +116,9 @@ void clone_handler(unsigned char* par, struct pcap_pkthdr* hdr, unsigned char* d
   }
 
   amount += hdr->len;
+  if (PRODUCE & paras.setting) {
+    gettimeofday(&hdr->ts, NULL);
+  }
   pcap_dump((unsigned char *)dump_file, hdr, data);
 
 }
@@ -123,11 +138,19 @@ void init_clone()
   dump_file = NULL;
   cur_pkt_num = 0;
 
+  first_ts.tv_sec = 0;
+  first_ts.tv_usec = 0;
+  last_ts.tv_sec = 0;
+  last_ts.tv_usec = 0;
 
   if (!(OFFLINE_CAP & paras.setting && 
-        WRITE_CAP & paras.setting && 
-        NET_POOL & paras.setting)) {
-    printf("-r, -w, -n are the MUST parameters\n");
+        WRITE_CAP & paras.setting)) {
+    printf("-r, -w are the MUST parameters\n");
+    exit(0);
+  }
+
+  if (NET_POOL & paras.setting ^ PRODUCE & paras.setting == 0) {
+    printf("-n, -k MUST be specified at least and at most one.\n");
     exit(0);
   }
 
@@ -143,7 +166,14 @@ void init_clone()
     exit(0);
   }
 
-  NET_BASE = paras.net;
+  if (NET_POOL & paras.setting) {
+    NET_BASE = paras.net;
+  }
+  else {
+    NET_BASE = cur_net;
+  }
+
+
   NET_BASE <<= MASK;
   MIN_IP += NET_BASE;
   MAX_IP += NET_BASE;
@@ -189,6 +219,12 @@ int main(int argc, char const *argv[])
       i += 2;
       continue;
     }
+    /* produce the traffic by the seed for k times */
+    else if (strcmp(argv[i], "-k") == 0) {
+      paras.setting |= PRODUCE;
+      paras.clone_times = atoi(argv[i+1]);
+      i += 2;
+    }
     else {
       printf("wrong parameters\n");
       exit(0);
@@ -201,7 +237,27 @@ int main(int argc, char const *argv[])
 
   gettimeofday(&start, NULL);
 
-  pcap_loop(desc, -1, (pcap_handler) clone_handler, NULL);
+
+  if (NET_POOL & paras.setting) {
+    pcap_loop(desc, -1, (pcap_handler) clone_handler, NULL);
+  }
+  else {
+    while (cur_clone_times != paras.clone_times) {
+      pcap_loop(desc, -1, (pcap_handler) clone_handler, NULL);
+      ip_pairs.clear();
+      cur_net ++;
+      NET_BASE = cur_net;
+      NET_BASE <<= MASK;
+      MIN_IP += NET_BASE;
+      MAX_IP += NET_BASE;
+      cur_clone_times ++;
+      pcap_close(desc);
+      char errbuf[1024];
+      desc = pcap_open_offline(paras.read_file, errbuf);
+    }
+  }
+  
+
   close_clone();
 
   gettimeofday(&now, NULL);
